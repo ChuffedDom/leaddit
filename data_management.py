@@ -11,6 +11,7 @@ class Lead(BaseModel):
     name = CharField()
     persona = CharField()
     score = IntegerField()
+    posted_recently = BooleanField(default=False)
 
 db.connect()
 db.create_tables([Lead], safe=True)
