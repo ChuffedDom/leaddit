@@ -81,6 +81,41 @@ def add_user_to_database(user, persona, score):
             lead.persona = persona
             lead.score = score
             lead.save()
+ 
+# go through the database and get all leads check if they have
+# posted in the subreddits of the persona in the last 24 hours
+# if so add 2 to the score of that lead
+def active_recently(persona):
+    subreddits = config["personas"][persona]
+    reddit = praw.Reddit(client_id=client_id, client_secret=client_secret, user_agent=user_agent)
+    for subreddit in tqdm(subreddits, desc="Checking activity", unit="subreddit"):
+        # get the last 24 hours of posts and comments from the subreddit
+        tqdm.write(f"Checking activity in subreddit: {subreddit}")
+        subreddit = reddit.subreddit(subreddit)
+        subreddit_posts = subreddit.new(limit=100)
+        # check if author of the post is in the database
+        for post in subreddit_posts:
+            if post.author:
+                try:
+                    lead = data_management.Lead.get(name=post.author.name, persona=persona)
+                    if lead:
+                        tqdm.write(f"Found lead post: {lead.name} in subreddit: {subreddit} for persona: {persona}")
+                        lead.score += 2
+                        lead.save()
+                except data_management.Lead.DoesNotExist:
+                    pass
+            # get the comments of the post
+            post.comments.replace_more(limit=0)
+            for comment in post.comments.list():
+                if comment.author:
+                    try:
+                        lead = data_management.Lead.get(name=comment.author.name, persona=persona)
+                        if lead:
+                            tqdm.write(f"Found lead comment: {lead.name} in subreddit: {subreddit} for persona: {persona}")
+                            lead.score += 1
+                            lead.save()
+                    except data_management.Lead.DoesNotExist:
+                        pass
 
 # print the database in a table to the screen
 def print_database():
@@ -91,14 +126,30 @@ def print_database():
         table.append([lead.id, lead.name, lead.persona, lead.score])
     print(tabulate(table, headers=["ID", "Name", "Persona", "Score"], tablefmt="grid"))
 
-# print_database()
+# get the leads out of the database for a persona and export to a CSV
+def export_leads_to_csv(persona):
+    leads = data_management.Lead.select().where(data_management.Lead.persona == persona)
+    # create a CSV file with the leads
+    with open(f"{persona}_leads.csv", "w") as f:
+        f.write("ID,Name,Persona,Score\n")
+        for lead in leads:
+            f.write(f"{lead.id},{lead.name},{lead.persona},{lead.score}\n")
 
 def populate_leads(subreddit_name, persona, depth="low"):
     for post in tqdm(get_top_posts(subreddit_name, depth=depth), desc="Getting posts", unit="post"):
         user = get_user_of_post(post)
         if user:
-            add_user_to_database(user, persona, 2)
+            add_user_to_database(user, persona, 4)
         for comment in get_top_comments(post, depth=depth):
             user = get_user_of_comment(comment)
             if user:
-                add_user_to_database(user, persona, 1)
+                add_user_to_database(user, persona, 3)
+
+def trim_leads():
+    # get all leads from the database
+    leads = data_management.Lead.select()
+    # order the leads by score
+    leads = sorted(leads, key=lambda x: x.score, reverse=True)
+    # remove all leads that are not in the top 50
+    for lead in leads[50:]:
+        lead.delete_instance()
